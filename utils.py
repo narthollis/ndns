@@ -6,16 +6,8 @@ def label2str(label):
     return s
     
 def labels2str(labels):
-    s = ''
+    s = b''
     for label in labels:
         s += label2str(label)
     s += struct.pack("!B", 0)
     return s
-
-def ipstr2int(ipstr):
-    ip = 0
-    i = 24
-    for octet in ipstr.split("."):
-        ip |= (int(octet) << i)
-        i -= 8
-    return ip
