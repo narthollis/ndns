@@ -24,10 +24,13 @@ class DnsError(Exception):
 
 class DnsRequestHandler(threading.Thread):
     
-    def __init__(self, ndns, client, clientaddress):
+    def __init__(self, ndns, request, isUdp, clientaddress):
+        self.request = request
         self.ndns = ndns
-        self.client = client
+        self.isUdp = isUdp
         self.clientaddress = clientaddress
+        
+        super().__init__()
     
     def parseRequest(self, request):
         headerLength = 12
@@ -37,9 +40,7 @@ class DnsRequestHandler(threading.Thread):
         qr = (flags >> 15) & 0x1
         opcode = (flags >> 11) & 0xf
         rd = (flags >> 8) & 0x1
-        
-        #print "qid", qid, "qdcount", qdcount, "qr", qr, "opcode", opcode, "rd", rd
-        
+                
         if qr != 0 or opcode != 0 or qdcount == 0:
             raise DnsError("Invalid query", rcode=1)
         
@@ -67,17 +68,24 @@ class DnsRequestHandler(threading.Thread):
     def buildNameServerResource(self, provider, zone):
         ns = []
         ar = []
-                
+        
+        namesInNS = []
         for name_server, ip, ttl in provider.getNameServers(zone, self.clientaddress):
-            ns.append({
+            if not name_server in namesInNS:
+                ns.append({
                        'qtype':2,
                        'qclass':1,
                        'ttl':ttl,
                        'rdata':utils.labels2str(name_server),
                        'question': zone
                     })
+                    
+                namesInNS.append(name_server)           
             
-            ar.append({'qtype':1, 'qclass':1, 'ttl':ttl, 'rdata':struct.pack("!I", ip)})
+            qtype = 1
+            if ip.version == 6:
+                qtype = 28            
+            ar.append({'qtype':qtype, 'qclass':1, 'ttl':ttl, 'rdata':ip.packed})
     
         return ns, ar
     
@@ -94,9 +102,9 @@ class DnsRequestHandler(threading.Thread):
         pkt = self.formatHeader(qid, rcode, num_an_resources, num_ns_resources, num_ar_resources)
         pkt += self.formatQuestion(question, qtype, qclass)
         for resource in resources:
-            if resource.has_key('question'):
+            if 'question' in resource:
                 pkt += self.formatResource(resource, resource['question'])
-        else:
+            else:
                 pkt += self.formatResource(resource, question)
         return pkt
     
@@ -114,22 +122,22 @@ class DnsRequestHandler(threading.Thread):
         return q
     
     def formatResource(self, resource, question):
-        r = ''
+        r = b''
         r += utils.labels2str(question)
         r += struct.pack("!HHIH", resource['qtype'], resource['qclass'], resource['ttl'], len(resource['rdata']))
         r += resource['rdata']
         return r
     
-    def run(self, request):
+    def run(self):
         qid = question = qtype = qclass = rcode = None
-        an_resource_records = ns_resource_records = ar_resource_records = None
+        an_resource_records = ns_resource_records = ar_resource_records = []
         
         response = None
         
         try:
-            (qid, question, qtype, qclass) = self.parseRequest(request)
+            (qid, question, qtype, qclass) = self.parseRequest(self.request)
             
-            question = map(lambda x: x.lower(), question)
+            question = list(map(lambda x: x.lower(), question))
             
             found = False
             
@@ -177,23 +185,24 @@ class DnsRequestHandler(threading.Thread):
                     break
                 
             if not found:
-                raise DnsError("query is not for our domain: %s" % ".".join(question), 3)
+                raise DnsError("query is not for our domain: %s" % ((b".".join(question)).decode('UTF-8'),), 3)
                     
         except DnsError as e:
             if qid:
                 if e.rcode == None:
                     e.rcode = 2
                 
-                response = self.format_response(qid, question, qtype, qclass, e.rcode, [], [], [])
+                response = self.formatResponse(qid, question, qtype, qclass, e.rcode, [], [], [])
                 
                 logger.error(e)
             else:
                 pass
-                
-        self.client.send(response)
-
-
-
+        
+        if self.isUdp:
+            self.ndns.udpOut.put((response, self.clientaddress))
+        else:
+            self.ndns.tcpOut.put((response, self.clientaddress))
+            
 class Ndns:
     '''
     classdocs
@@ -209,41 +218,73 @@ class Ndns:
         self.port = port
         
         self.udp = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-        self.udp.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY,0)
-        self.udp.bind((self.host, self.port))
-        
         self.tcp = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        self.tcp.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY,0)
+        
+        try:
+            self.udp.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY,0)
+            self.tcp.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY,0)
+        except AttributeError:
+            pass        
+        
+        self.udp.bind((self.host, self.port))
         self.tcp.bind((self.host, self.port))
 
         self.clients = {}
-        self.clientOut = {}
+        self.tcpOut = queue.Queue()
+        self.udpOut = queue.Queue()
         
         self.running = True
+        
+        self.providers = []
+        
+    def registerProvider(self, provider):
+        self.providers.append(provider)
+        
+    def getProviders(self):
+        return self.providers
 
     def run(self):
+        logger.info('Starting Main Loop')
         
         while self.running:
-            (rlist,wlist,xlist) = select.select([self.upd, self.tdp] + self.clients.keys(), [self.clients], [])
+            (rlist,wlist,xlist) = select.select(
+                    [self.udp, self.tcp],
+                    [self.udp, self.tcp],
+                    []
+                )
+                
             del xlist
             
             for s in rlist:
-                if s == self.upd or s == self.tcp:
-                    client, clientaddress = self.sock.accept()
-                    self.clients[client] = DnsRequestHandler(self, client, clientaddress)
-                    self.clientOut[client] = queue.Queue()
+                data,clientaddress = s.recvfrom(512) # Max UDP DNS packet size
+                if not data:
+                    continue
                     
-                elif s in self.clients.keys():
-                    data = s.recv(512) # Max UDP DNS packet size
-                    if not data:
-                        del self.clients[s]
-                        del self.clientOut[s]
-                        s.close()
-                    else:
-                        self.clients.run(data)
+                handler = DnsRequestHandler(self, data, s == self.udp, clientaddress)
+                handler.start()
+                                
+                logger.info('Accepting connection from %s' % (clientaddress, ))
                     
             for s in wlist:
-                if s in self.clients:
-                    if not self.clientOut[s].empty():
-                        s.send(self.clientOut[s].get())
+                if s == self.udp:
+                    if not self.udpOut.empty():
+                        s.sendto(*self.udpOut.get())
+                elif s == self.tcp:
+                    if not self.tcpOut.empty():
+                        s.sendto(*self.tcpOut.get())
 
+if __name__ == "__main__":
+
+    logConsole = logging.StreamHandler()
+    logConsole.setLevel(logging.DEBUG)
+    
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logConsole)
+
+    from providers import localhost
+    
+    s = Ndns()
+    s.registerProvider(localhost.LocalhostProvider())
+    
+    s.run()
+    
