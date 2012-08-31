@@ -1,88 +1,56 @@
-# Copyright (c) 2009 Tom Pinckney
-#
-# Permission is hereby granted, free of charge, to any person
-# obtaining a copy of this software and associated documentation
-# files (the "Software"), to deal in the Software without
-# restriction, including without limitation the rights to use,
-# copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the
-# Software is furnished to do so, subject to the following
-# conditions:
-#
-#     The above copyright notice and this permission notice shall be
-#     included in all copies or substantial portions of the Software.
-#
-#     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-#     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
-#     OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-#     NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+
+import dns.name
+import dns.zone
+import dns.message
+
+"""
+This is a very basic dns provider that reads a zone file and
+loads it into memory. The initial implemtation only supports
+SOA, NS, A, AAAA, CNAME, MX and TXT records.
+"""
 
 
-#
-# A pymds source filter.
-#
-# pymdsfile answers queries by consulting a text database.
-#
-# initializer: a single argument specifying the name of the database
-# file.  See the example pinckney.com.txt database for documentation
-# on the format of this file.
-#
+class FileProvider:
+    def __init__(self, file, zone):
+        print (file, zone)
+        self.zone = dns.name.from_text(zone)
+        self.data = dns.zone.from_file(file, zone)
 
-import struct
-from .null import NullProvider
+        self.filters = []
 
-from utils import *
+    def getZones(self, clientaddress):
+        print(self.zone)
+        return [self.zone]
 
-class PyMdsFileProvider(NullProvider):
-    '''
-    This is a basic file provider bassed on the file module form pymds
-    '''
-        
-    def __init__(self, filename):
-        self._answers = {}
-        self._filename = filename
-        self._parse_file()
-        
-        super().__init__()
+    def getResponse(self, request, clientaddress):
+        response = dns.message.make_response(request)
 
-    def _parse_file(self):
-        f = open(self._filename, "r")
-        for line in f.readlines():
-            line = line.strip()        
-            if line and line[0] != '#':
-                question, type, value = line.split()
-                question = question.lower()
-                type = type.upper()
-                if question == '@':
-                    question = ''
-                if type == 'A':
-                    answer = struct.pack("!I", ipstr2int(value))
-                    qtype = 1
-                if type == 'NS':
-                    answer = labels2str(value.split("."))
-                    qtype = 2
-                elif type == 'CNAME':
-                    answer = labels2str(value.split("."))
-                    qtype = 5
-                elif type == 'TXT':
-                    answer = label2str(value)
-                    qtype = 16
-                elif type == 'MX':
-                    preference, domain = value.split(":")
-                    answer = struct.pack("!H", int(preference))
-                    answer += labels2str(domain.split("."))
-                    qtype = 15
-                self._answers.setdefault(question, {}).setdefault(qtype, []).append(answer)
-        f.close()
+        for question in response.question:
+            rdataset = self.data.find_rdataset(question.name, question.rdtype)
+            rrset = response.find_rrset(
+                response.answer,
+                question.name,
+                rdataset.rdclass,
+                rdataset.rdtype,
+                rdataset.covers,
+                None,
+                True
+            )
 
-    def get_response(self, query, domain, qtype, qclass, src_addr):
-        if query not in self._answers:
-            return 3, []
-        if qtype in self._answers[query]:
-            results = [{'qtype': qtype, 'qclass':qclass, 'ttl': 500, 'rdata': answer} for answer in self._answers[query][qtype]]
-            return 0, results
-        elif qtype == 1:
-            # if they asked for an A record and we didn't find one, check for a CNAME
-            return self.get_response(query, domain, 5, qclass, src_addr)
-        else:
-            return 3, []
+            import types
+            for item in rdataset:
+                print(type(item))
+                for key in dir(item):
+                    i = item.__getattribute__(key)
+                    if isinstance(type(i), types.MethodType):
+                        continue
+                    print (key, ':', i)
+                rrset.add(item)
+
+        return response
+
+    def getFilters(self):
+        return self.filters
+
+    def addFilter(self, dnsfilter):
+        self.filters.append(dnsfilter)
