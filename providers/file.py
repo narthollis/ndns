@@ -1,4 +1,6 @@
 
+import logging
+
 import dns.name
 import dns.zone
 import dns.message
@@ -9,10 +11,13 @@ This is a very basic dns provider that reads a zone file and
 loads it into memory.
 """
 
+logger = logging.getLogger('DNS.File')
+
 
 class FileProvider:
     def __init__(self, file, zone):
-        print (file, zone)
+        logger.info("Serving zone '{}' from '{}'".format(zone, file))
+
         self.zone = dns.name.from_text(zone)
         self.data = dns.zone.from_file(
             file,
