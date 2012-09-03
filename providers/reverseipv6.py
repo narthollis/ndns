@@ -28,13 +28,23 @@
 # (for which PTR records work).
 #
 
+import logging
 
 import dns.name
+import dns.rdatatype
+
+
+logger = logging.getLogger('DNS.AutoRv6')
 
 
 class ReverseIpv6:
 
     def __init__(self, basedomain, v6prefix):
+        logger.info('Serving auto generated reveser zone {} for {}'.format(
+            v6prefix,
+            basedomain
+        ))
+
         self._answers = {}
         self.basedomain = dns.name.from_text(basedomain)
         self.v6prefix = v6prefix
@@ -44,8 +54,28 @@ class ReverseIpv6:
         self.zone = dns.name.Name(v6bits + ['ipv6', 'arpa', ''])
 
     def getZones(self, clientaddress):
-        return self.basedomain
+        return [self.zone, self.basedomain]
 
-if __name__ == "__main__":
-    a = ReverseIpv6('nar.net', '2001:dead:beef::')
-    print(a.zone)
+    def getResponse(self, request, clientaddress):
+        response = dns.message.make_response(request)
+
+        for question in request.question:
+            if question.rdtype == dns.rdatatype.AAAA:
+                pass
+
+            elif question.rdtype == dns.rdatatype.PTR:
+                pass
+
+            elif question.rdtype == dns.rdatatype.NS:
+                pass
+
+            elif question.rdtype == dns.rdatatype.SOA:
+                pass
+
+            else:
+                response.set_rcode(dns.rcode.NOTIMP)
+
+        return response
+
+    def getFilters(self):
+        return []
