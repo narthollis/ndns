@@ -83,6 +83,24 @@ class FileProvider:
         if len(response.answer) <= 1:
             response.set_rcode(dns.rcode.NXDOMAIN)
 
+            rdataset = self.getRdatasetWildcardRecursion(
+                self.zone,
+                dns.rdatatype.SOA
+            )
+
+            rrset = response.find_rrset(
+                response.authority,
+                self.zone,
+                rdataset.rdclass,
+                rdataset.rdtype,
+                rdataset.covers,
+                None,
+                True
+            )
+
+            for item in rdataset:
+                rrset.add(item, rdataset.ttl)
+
         return response
 
     def getFilters(self):
