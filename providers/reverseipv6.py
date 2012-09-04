@@ -29,8 +29,14 @@
 #
 
 import logging
+import datetime
 
 import dns.name
+import dns.rdtypes.ANY.NS
+import dns.rdtypes.ANY.SOA
+import dns.rdtypes.ANY.PTR
+import dns.rdtypes.IN.AAAA
+import dns.rdataclass
 import dns.rdatatype
 
 
@@ -39,7 +45,7 @@ logger = logging.getLogger('DNS.AutoRv6')
 
 class ReverseIpv6:
 
-    def __init__(self, basedomain, v6prefix):
+    def __init__(self, basedomain, v6prefix, soa, nameservers):
         logger.info('Serving auto generated reveser zone {} for {}'.format(
             v6prefix,
             basedomain
@@ -53,8 +59,33 @@ class ReverseIpv6:
         v6bits.reverse()
         self.zone = dns.name.Name(v6bits + ['ipv6', 'arpa', ''])
 
+        self.nameservers = []
+        for nameserver in nameservers:
+            self.nameservers.append(
+                dns.rdtypes.ANY.NS.NS(
+                    dns.rdataclass.IN,
+                    dns.rdatatype.NS,
+                    dns.name.from_text(nameserver)
+                )
+            )
+
+        self.soa = dns.rdtypes.ANY.SOA.SOA(
+            dns.rdataclass.IN,
+            dns.rdatatype.SOA,
+            dns.name.from_text(soa['ns']),
+            dns.name.from_text(soa['contact']),
+            datetime.datetime.now().strftime('%Y%m%d00'),
+            soa['refresh'],
+            soa['retry'],
+            soa['expire'],
+            soa['minimum']
+        )
+        self.soaTtl = soa['ttl']
+
     def getZones(self, clientaddress):
-        return [self.zone, self.basedomain]
+        zones = [self.zone, self.basedomain]
+        print(zones)
+        return zones
 
     def getResponse(self, request, clientaddress):
         response = dns.message.make_response(request)
@@ -64,15 +95,26 @@ class ReverseIpv6:
                 pass
 
             elif question.rdtype == dns.rdatatype.PTR:
-                pass
+                print(question)
 
             elif question.rdtype == dns.rdatatype.NS:
-                pass
+                response.find
 
             elif question.rdtype == dns.rdatatype.SOA:
                 pass
 
             else:
+                soaRRset = response.find_rrset(
+                    response.authority,
+                    self.soa.name,
+                    self.soa.rdclass,
+                    self.soa.rdtype,
+                    soa.covers,
+                    None,
+                    True
+                )
+                soaRRset.add(soa, 7200)
+
                 response.set_rcode(dns.rcode.NOTIMP)
 
         return response
