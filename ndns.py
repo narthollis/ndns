@@ -35,17 +35,12 @@ class DnsRequestHandler(threading.Thread):
         self.ndns = ndns
         self.isUdp = isUdp
         self.clientaddress = clientaddress
-        if not self.isUdp:
-            self.tcpHeader = request[:2]
-            self.raw_request = request[2:]
 
         super().__init__()
 
     def run(self):
         request = dns.message.from_wire(self.raw_request, question_only=True)
         response = dns.message.make_response(request)
-
-        print(str(request))
 
         found = False
         for provider in self.ndns.getProviders():
@@ -67,9 +62,9 @@ class DnsRequestHandler(threading.Thread):
         if self.isUdp:
             self.ndns.udpOut.put((response.to_wire(), self.clientaddress))
         else:
-            print(str(response))
+            data = response.to_wire()
             self.ndns.tcpOut[self.clientaddress].put(
-                self.tcpHeader + response.to_wire()
+                struct.pack('!H', len(data)) + data
             )
 
 
@@ -101,6 +96,7 @@ class Ndns:
         self.clients = {}
         self.tcpOut = {}
         self.udpOut = queue.Queue()
+        self.tcpIn = {}
 
         self.running = True
 
@@ -158,6 +154,7 @@ class Ndns:
                         inputs[clientaddress] = conn
                         outputs[clientaddress] = conn
                         self.tcpOut[clientaddress] = queue.Queue()
+                        self.tcpIn[clientaddress] = None
 
                         logger.info('Accepted TCP from %s' % (clientaddress, ))
 
@@ -166,29 +163,45 @@ class Ndns:
                         # 4.2.2.
 
                         data = s.recv(1024)
+                        caddr = s.getpeername()
 
                         if not data:
                             logger.debug(
                                 'Closing connection %s' % (s.getpeername(), )
                             )
 
-                            del inputs[s.getpeername()]
-                            del outputs[s.getpeername()]
-                            del self.tcpOut[s.getpeername()]
+                            del inputs[caddr]
+                            del outputs[caddr]
+                            del self.tcpOut[caddr]
+                            del self.tcpIn[caddr]
                             s.close()
                         else:
-                            logger.debug(
-                                'Got data from %s' % (s.getpeername(), )
-                            )
+                            if self.tcpIn[caddr] is None:
+                                length = struct.unpack('!H', data[:2])[0]
+                                data = data[2:]
 
-                            handler = DnsRequestHandler(
-                                self,
-                                data,
-                                False,
-                                s.getpeername()
-                            )
+                                self.tcpIn[caddr] = {
+                                    'length': length,
+                                    'buff': b''
+                                }
 
-                            handler.start()
+                            self.tcpIn[caddr]['buff'] += data
+
+                            if len(self.tcpIn[caddr]['buff']) == \
+                                    self.tcpIn[caddr]['length']:
+
+                                logger.debug(
+                                    'Got data from %s' % (s.getpeername(), )
+                                )
+
+                                handler = DnsRequestHandler(
+                                    self,
+                                    data,
+                                    False,
+                                    s.getpeername()
+                                )
+
+                                handler.start()
 
                 for s in wlist:
                     if s == self.udp:
@@ -211,7 +224,6 @@ class Ndns:
                 self.running = False
             except Exception as e:
                 self.running = False
-                print(e)
 
         self.tcp.close()
         self.udp.close()
@@ -240,9 +252,22 @@ if __name__ == "__main__":
         'providers' + os.sep + 'example.txt'
     )
 
-    s.registerProvider(file.FileProvider(path, 'example.'))
+    ns = ['localhost.']
+
+    soa = {
+        'ns': ns[0],
+        'contact': 'hostmaster.example.',
+        'refresh': 7200,
+        'retry': 600,
+        'expire': 36000,
+        'minimum': 300,
+        'ttl': 7200
+    }
+
     s.registerProvider(
-        reverseipv6.ReverseIpv6('2001:44b8:236:8f00::', 'v6.example.')
+        reverseipv6.ReverseIpv6('v6.example.', '2001:44b8:236:8f00::', soa, ns)
     )
+
+    s.registerProvider(file.FileProvider(path, 'example.'))
 
     s.run()
