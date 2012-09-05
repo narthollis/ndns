@@ -42,21 +42,39 @@ class DnsRequestHandler(threading.Thread):
         request = dns.message.from_wire(self.raw_request, question_only=True)
         response = dns.message.make_response(request)
 
+        bestFitProvider = None
+        bestFitProviderDetails = None
+
+        name = request.question[0].name
+
         found = False
         for provider in self.ndns.getProviders():
             for zone in provider.getZones(self.clientaddress):
-                if request.question[0].name.is_subdomain(zone):
-                    resp = provider.getResponse(request, self.clientaddress)
+                compare = name.fullcompare(zone)
 
-                    if resp is not None:
-                        response = resp
-                        found = True
-                        break
-
+                if compare[0] == dns.name.NAMERELN_EQUAL:
+                    bestFitProvider = provider
+                    bestFitProviderDetails = compare
+                    found = True
+                    break
+                elif compare[0] == dns.name.NAMERELN_SUBDOMAIN:
+                    if bestFitProvider is None:
+                        bestFitProvider = provider
+                        bestFitProviderDetails = compare
+                    elif compare[1] < bestFitProvider[1]:
+                        bestFitProvider = provider
+                        bestFitProviderDetails = compare
             if found:
                 break
 
-        if not found:
+        if bestFitProvider is not None:
+            resp = bestFitProvider.getResponse(request, self.clientaddress)
+            if resp is not None:
+                for f in bestFitProvider.getFilters():
+                    resp = f(request, resp)
+
+                response = resp
+        else:
             response.set_rcode(dns.rcode.NXDOMAIN)
 
         if self.isUdp:
@@ -252,7 +270,7 @@ if __name__ == "__main__":
         'providers' + os.sep + 'example.txt'
     )
 
-    ns = ['localhost.']
+    ns = ['localhost.', 'ns0.localhost.', 'ns1.localhost.']
 
     soa = {
         'ns': ns[0],
