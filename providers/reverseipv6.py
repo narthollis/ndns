@@ -55,9 +55,11 @@ class ReverseIpv6:
         self.basedomain = dns.name.from_text(basedomain)
         self.v6prefix = v6prefix
 
-        v6bits = list(v6prefix.replace(':', ''))
+        v6bits = v6prefix.strip(':').split(':')
+        v6bits = [x.rjust(4, '0') for x in v6bits]
+        v6bits = list(''.join(v6bits))
         v6bits.reverse()
-        self.zone = dns.name.Name(v6bits + ['ipv6', 'arpa', ''])
+        self.zone = dns.name.Name(v6bits + ['ip6', 'arpa', ''])
 
         self.nameservers = []
         for nameserver in nameservers:
@@ -74,7 +76,7 @@ class ReverseIpv6:
             dns.rdatatype.SOA,
             dns.name.from_text(soa['ns']),
             dns.name.from_text(soa['contact']),
-            datetime.datetime.now().strftime('%Y%m%d00'),
+            int(datetime.datetime.now().strftime('%Y%m%d00')),
             soa['refresh'],
             soa['retry'],
             soa['expire'],
@@ -84,36 +86,85 @@ class ReverseIpv6:
 
     def getZones(self, clientaddress):
         zones = [self.zone, self.basedomain]
-        print(zones)
         return zones
 
     def getResponse(self, request, clientaddress):
         response = dns.message.make_response(request)
 
         for question in request.question:
+            zone = None
+            if question.name.is_subdomain(self.zone):
+                zone = self.zone
+            else:
+                zone = self.basedomain
+
             if question.rdtype == dns.rdatatype.AAAA:
                 pass
 
-            elif question.rdtype == dns.rdatatype.PTR:
-                print(question)
+            elif question.rdtype == dns.rdatatype.PTR \
+                    or question.rdtype == dns.rdatatype.ANY:
+                subdomain = list(question.name.labels[:-3])
+                subdomain.reverse()  # cause, you know PRT is backwards
+                subdomain = b''.join(subdomain)
+                subdomain = [
+                    subdomain[i:i + 4] for i in range(0, len(subdomain), 4)
+                ]
+                subdomain = b'-'.join(subdomain)
+
+                ptr = dns.rdtypes.ANY.PTR.PTR(
+                    question.rdclass,
+                    dns.rdatatype.PTR,
+                    dns.name.Name([subdomain] + list(self.basedomain.labels))
+                )
+
+                ptrRRset = response.find_rrset(
+                    response.answer,
+                    question.name,
+                    ptr.rdclass,
+                    ptr.rdtype,
+                    ptr.covers,
+                    None,
+                    True
+                )
+
+                ptrRRset.add(ptr, self.soaTtl)
 
             elif question.rdtype == dns.rdatatype.NS:
-                response.find
+                nsRRset = response.find_rrset(
+                    response.answer,
+                    zone,
+                    self.nameservers[0].rdclass,
+                    self.nameservers[0].rdtype,
+                    self.nameservers[0].covers,
+                    None,
+                    True
+                )
+                for ns in self.nameservers:
+                    nsRRset.add(ns, self.soaTtl)
 
             elif question.rdtype == dns.rdatatype.SOA:
-                pass
+                soaRRset = response.find_rrset(
+                    response.answer,
+                    zone,
+                    self.soa.rdclass,
+                    self.soa.rdtype,
+                    self.soa.covers,
+                    None,
+                    True
+                )
+                soaRRset.add(self.soa, self.soaTtl)
 
             else:
                 soaRRset = response.find_rrset(
                     response.authority,
-                    self.soa.name,
+                    zone,
                     self.soa.rdclass,
                     self.soa.rdtype,
-                    soa.covers,
+                    self.soa.covers,
                     None,
                     True
                 )
-                soaRRset.add(soa, 7200)
+                soaRRset.add(self.soa, self.soaTtl)
 
                 response.set_rcode(dns.rcode.NOTIMP)
 
