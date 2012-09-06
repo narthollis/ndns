@@ -1,5 +1,19 @@
 import ipaddr
 
+import dns.name
+import dns.reversename
+import dns.message
+import dns.rdata
+
+import dns.rdataclass
+import dns.rdatatype
+
+import dns.rdtypes.ANY.SOA
+import dns.rdtypes.ANY.NS
+import dns.rdtypes.IN.A
+import dns.rdtypes.IN.AAAA
+
+
 from providers.null import NullProvider
 import utils
 
@@ -9,43 +23,147 @@ Localhost resolver.
 Returns valid loopback responses
 '''
 
-class LocalhostProvider(NullProvider):
-    
+
+class LocalhostProvider:
+
     zones = [
-            [b'127', b'in-addr', b'arpa'],
-            [b'1', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'0', b'ip6', b'arpa'],
-            [b'localhost'],
-            [b'localdomain']
-        ]
-    
+        dns.name.from_text('127.in-addr.arpa'),
+        dns.name.from_text('::1'),
+        dns.name.from_text('localhost'),
+    ]
+
     def __init__(self):
-        self.filters = [] 
-    
-    def getNameServers(self, zone, clientaddress):
-        return [
-                ([b'localhost'], ipaddr.IPv4Address('127.0.0.1'), 1200),
-                ([b'localhost'], ipaddr.IPv6Address('::1'), 1200)
-            ]
-    
+        self.filters = []
+
     def getZones(self, clientaddress):
         return self.zones
-    
-    def getResponse(self, query, zone, qtype, qclass, clientaddress):
-        ret = (3,[])
-    
-        if zone == self.zones[2]:
-            if qtype == 1:
-                ret = (0, [{'qtype': qtype, 'qclass':qclass, 'ttl': 1200, 'rdata': ipaddr.IPv4Address('127.0.0.1').packed}])
-            elif qtype == 2:
-                ret = (0, [{'qtype': qtype, 'qclass':qclass, 'ttl': 1200, 'rdata': utils.labels2str(b'localhost'.split(b'.'))}])
-            elif qtype == 28:
-                ret = (0, [{'qtype': qtype, 'qclass':qclass, 'ttl': 1200, 'rdata': ipaddr.IPv6Address('::1').packed}])
+
+    def getResponse(self, request, clientaddress):
+        print(request)
+
+        soa = dns.rdtypes.ANY.SOA.SOA(
+            dns.rdataclass.IN,
+            dns.rdatatype.SOA,
+            dns.name.from_text('localhost.'),
+            dns.name.from_text('hostmaster.localhost.'),
+            2012082901,
+            7200,
+            1200,
+            240000,
+            700
+        )
+
+        response = dns.message.make_response(request)
+        response.set_rcode(dns.rcode.NXDOMAIN)
+
+        rrSet = request.question[0]
+
+        if rrSet.name.is_subdomain(self.zones[2]):
+            if rrSet.rdtype == dns.rdatatype.SOA:
+                response.set_rcode(dns.rcode.NOERROR)
+
+                soaRRset = response.find_rrset(
+                    response.answer,
+                    dns.name.from_text('localhost.'),
+                    dns.rdataclass.IN,
+                    dns.rdatatype.SOA,
+                    soa.covers,
+                    None,
+                    True
+                )
+                soaRRset.add(soa, 7200)
+
+            elif rrSet.rdtype == dns.rdatatype.NS:
+                response.set_rcode(dns.rcode.NOERROR)
+
+                rdata = dns.tdtypes.ANY.NS.NS(
+                    rrSet.rdclass,
+                    rrSet.rdtype,
+                    dns.name.from_text('localhost.')
+                )
+
+                responseRrSet = response.find_rrset(
+                    response.answer,
+                    rrSet.name,
+                    rrSet.rdclass,
+                    rrSet.rdtype,
+                    rdata.covers,
+                    None,
+                    True
+                )
+                responseRrSet.add(rdata, 1200)
+
+                additionalRdata = dns.rdtypes.IN.A.A(
+                    rrSet.rdclass,
+                    rrSet.rdtype,
+                    '127.0.0.1'
+                )
+                additionalRrSet = response.find_rrset(
+                    response.additional,
+                    rrSet.name,
+                    rrSet.rdclass,
+                    rrSet.rdtype,
+                    rdata.covers,
+                    None,
+                    True
+                )
+
+            elif rrSet.rdtype == dns.rdatatype.A:
+                response.set_rcode(dns.rcode.NOERROR)
+
+                rdata = dns.rdtypes.IN.A.A(
+                    rrSet.rdclass,
+                    rrSet.rdtype,
+                    '127.0.0.1'
+                )
+
+                responseRrSet = response.find_rrset(
+                    response.answer,
+                    rrSet.name,
+                    rdata.rdclass,
+                    rdata.rdtype,
+                    rdata.covers,
+                    None,
+                    True
+                )
+                responseRrSet.add(rdata, 1200)
+
+            elif rrSet.rdtype == dns.rdatatype.AAAA:
+                response.set_rcode(dns.rcode.NOERROR)
+
+                rdata = dns.rdtypes.IN.AAAA.AAAA(
+                    rrSet.rdclass,
+                    rrSet.rdtype,
+                    '::1'
+                )
+
+                responseRrSet = response.find_rrset(
+                    response.answer,
+                    rrSet.name,
+                    rrSet.rdclass,
+                    rrSet.rdtype,
+                    rdata.covers,
+                    None,
+                    True
+                )
+                responseRrSet.add(rdata, 1200)
+
             else:
-                ret = (4, [])
-        return ret
-    
+                soaRRset = response.find_rrset(
+                    response.authority,
+                    dns.name.from_text('localhost.'),
+                    dns.rdataclass.IN,
+                    dns.rdatatype.SOA,
+                    soa.covers,
+                    None,
+                    True
+                )
+                soaRRset.add(soa, 7200)
+
+        return response
+
     def getFilters(self):
         return []
-    
+
     def addFilter(self, f):
         self.filters.append(f)
