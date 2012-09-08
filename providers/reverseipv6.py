@@ -98,11 +98,38 @@ class ReverseIpv6:
             else:
                 zone = self.basedomain
 
-            if question.rdtype == dns.rdatatype.AAAA:
-                pass
+            if (question.rdtype == dns.rdatatype.AAAA
+                    or question.rdtype == dns.rdatatype.ANY) \
+                    and zone == self.basedomain:
+                v6bits = self.v6prefix.strip(':').split(':')
+                v6bits = [x.rjust(4, '0').encode() for x in v6bits]
 
-            elif question.rdtype == dns.rdatatype.PTR \
-                    or question.rdtype == dns.rdatatype.ANY:
+                questionBits = question.name.labels[0].split(b'-')
+                if questionBits[:len(v6bits)] == v6bits:
+                    aaaa = dns.rdtypes.IN.AAAA.AAAA(
+                        dns.rdataclass.IN,
+                        dns.rdatatype.AAAA,
+                        (b':'.join(questionBits)).decode('UTF-8')
+                    )
+
+                    aaaaRRset = response.find_rrset(
+                        response.answer,
+                        question.name,
+                        aaaa.rdclass,
+                        aaaa.rdtype,
+                        aaaa.covers,
+                        None,
+                        True
+                    )
+
+                    aaaaRRset.add(aaaa, self.soaTtl)
+
+                else:
+                    response.set_rcode(dns.rcode.NXDOMAIN)
+
+            elif (question.rdtype == dns.rdatatype.PTR
+                    or question.rdtype == dns.rdatatype.ANY) \
+                    and zone == self.zone:
                 subdomain = list(question.name.labels[:-3])
                 subdomain.reverse()  # cause, you know PRT is backwards
                 subdomain = b''.join(subdomain)
@@ -128,6 +155,19 @@ class ReverseIpv6:
                 )
 
                 ptrRRset.add(ptr, self.soaTtl)
+
+                nsRRset = response.find_rrset(
+                    response.authority,
+                    zone,
+                    self.nameservers[0].rdclass,
+                    self.nameservers[0].rdtype,
+                    self.nameservers[0].covers,
+                    None,
+                    True
+                )
+
+                for ns in self.nameservers:
+                    nsRRset.add(ns, self.soaTtl)
 
             elif question.rdtype == dns.rdatatype.NS:
                 nsRRset = response.find_rrset(
