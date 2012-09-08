@@ -84,7 +84,7 @@ class DnsRequestHandler(threading.Thread):
                     if bestFitProvider is None:
                         bestFitProvider = provider
                         bestFitProviderDetails = compare
-                    elif compare[1] < bestFitProvider[1]:
+                    elif compare[1] < bestFitProviderDetails[1]:
                         bestFitProvider = provider
                         bestFitProviderDetails = compare
             if found:
