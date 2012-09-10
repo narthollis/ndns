@@ -30,6 +30,7 @@
 
 import logging
 import datetime
+import bisect
 
 import dns.name
 import dns.rdtypes.ANY.NS
@@ -210,8 +211,7 @@ class AutoReverseIpv6:
         return response
 
     def addFilter(self, f):
-        self.filters.append(f)
-        self.filters.sort()
+        bisect.insort_right(self.filters, f)
 
     def getFilters(self):
         return self.filters
