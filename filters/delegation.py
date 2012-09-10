@@ -59,12 +59,12 @@ class Delegation:
                 )
             )
 
-        for name, addresses in self.glue.items():
+        for name, addresses in glue.items():
             name = dns.name.from_text(name)
             self.glue[name] = []
 
             for address in addresses:
-                if address.find(':') > 0:
+                if address.find(':') > -1:
                     self.glue[name].append(
                         dns.rdtypes.IN.AAAA.AAAA(
                             dns.rdataclass.IN,
@@ -98,38 +98,41 @@ class Delegation:
             for ns in self.nameservers:
                 nsRRset.add(ns, self.ttl)
 
-            for name, glue in self.glue:
+            for name, glue in self.glue.items():
                 glueRRset = response.find_rrset(
                     response.additional,
                     name,
-                    glue.rdclass,
-                    glue.rdtype,
-                    glue.covers,
+                    glue[0].rdclass,
+                    glue[0].rdtype,
+                    glue[0].covers,
                     None,
                     True
                 )
-
-                glueRRset.add(glue, self.ttl)
+                for record in glue:
+                    glueRRset.add(record, self.ttl)
 
         return response
 
     def __eq__(self, other):
-        return self.zone.__eq__(other)
+        return self.zone.__eq__(other.zone)
 
     def __ne__(self, other):
-        return self.zone.__ne__(other)
+        return self.zone.__ne__(other.zone)
 
     def __lt__(self, other):
-        return self.zone.__lt__(other)
+        return self.zone.__lt__(other.zone)
 
     def __le__(self, other):
-        return self.zone.__le__(other)
+        return self.zone.__le__(other.zone)
 
     def __ge__(self, other):
-        return self.zone.__ge__(other)
+        return self.zone.__ge__(other.zone)
 
     def __gt__(self, other):
-        return self.zone.__gt__(other)
+        return self.zone.__gt__(other.zone)
+
+    def __repr__(self):
+        return "<Delegation('%s', %s>" % (self.zone, self.nameservers)
 
 
 class ReverseIPv6Delegation(Delegation):
@@ -138,3 +141,7 @@ class ReverseIPv6Delegation(Delegation):
         zone = utils.ipv6.prefixToReverseName(v6prefix)
 
         super().__init__(zone, *args, **kwargs)
+
+    def __repr__(self):
+        return "<ReverseIPv6Delegation('%s', %s>" % \
+            (self.zone, self.nameservers)
