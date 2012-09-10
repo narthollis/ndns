@@ -317,6 +317,13 @@ if __name__ == "__main__":
         '2001:44b8:236:8f00:0000::',
         ns,
         ttl=7200,
+        glue={'localhost.': ['::1']}
+    ))
+
+    v6revLookup.addFilter(delegation.ReverseIPv6Delegation(
+        '2001:44b8:236:8f00:0000:0000::',
+        ['agasgasg.', 'fsadfsafsd.'],
+        ttl=7200,
         glue={}
     ))
 
