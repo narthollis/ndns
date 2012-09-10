@@ -39,11 +39,12 @@ import dns.rdtypes.IN.AAAA
 import dns.rdataclass
 import dns.rdatatype
 
+import utils.ipv6
 
 logger = logging.getLogger('DNS.AutoRv6')
 
 
-class ReverseIpv6:
+class AutoReverseIpv6:
 
     def __init__(self, basedomain, v6prefix, soa, nameservers):
         logger.info('Serving auto generated reveser zone {} for {}'.format(
@@ -54,12 +55,9 @@ class ReverseIpv6:
         self._answers = {}
         self.basedomain = dns.name.from_text(basedomain)
         self.v6prefix = v6prefix
+        self.filters = []
 
-        v6bits = v6prefix.strip(':').split(':')
-        v6bits = [x.rjust(4, '0') for x in v6bits]
-        v6bits = list(''.join(v6bits))
-        v6bits.reverse()
-        self.zone = dns.name.Name(v6bits + ['ip6', 'arpa', ''])
+        self.zone = utils.ipv6.prefixToReverseName(v6prefix)
 
         self.nameservers = []
         for nameserver in nameservers:
@@ -82,6 +80,7 @@ class ReverseIpv6:
             soa['expire'],
             soa['minimum']
         )
+
         self.soaTtl = soa['ttl']
 
     def getZones(self, clientaddress):
@@ -210,5 +209,9 @@ class ReverseIpv6:
 
         return response
 
+    def addFilter(self, f):
+        self.filters.append(f)
+        self.filters.sort()
+
     def getFilters(self):
-        return []
+        return self.filters

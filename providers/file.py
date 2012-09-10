@@ -42,7 +42,7 @@ loads it into memory.
 logger = logging.getLogger('DNS.File')
 
 
-class FileProvider:
+class ZoneFile:
     def __init__(self, file, zone):
         logger.info("Serving zone '{}' from '{}'".format(zone, file))
 
