@@ -94,7 +94,7 @@ class DnsRequestHandler(threading.Thread):
             resp = bestFitProvider.getResponse(request, self.clientaddress)
             if resp is not None:
                 for f in bestFitProvider.getFilters():
-                    resp = f(request, resp)
+                    resp = f.filter(request, resp)
 
                 response = resp
         else:
@@ -284,6 +284,7 @@ if __name__ == "__main__":
 
     from providers import file
     from providers import reverseipv6
+    from filters import delegation
     import os.path
     import sys
 
@@ -305,10 +306,24 @@ if __name__ == "__main__":
         'ttl': 7200
     }
 
-    s.registerProvider(
-        reverseipv6.ReverseIpv6('v6.example.', '2001:44b8:236:8f00::', soa, ns)
+    v6revLookup = reverseipv6.AutoReverseIpv6(
+        'v6.example.',
+        '2001:44b8:236:8f00::',
+        soa,
+        ns
     )
 
-    s.registerProvider(file.FileProvider(path, 'example.'))
+    v6revLookup.addFilter(delegation.ReverseIPv6Delegation(
+        '2001:44b8:236:8f00:0000::',
+        ns,
+        ttl=7200,
+        glue={}
+    ))
+
+    s.registerProvider(
+        v6revLookup
+    )
+
+    s.registerProvider(file.ZoneFile(path, 'example.'))
 
     s.run()
