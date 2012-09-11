@@ -34,12 +34,30 @@ import dns.rdtypes.ANY.NS
 import dns.rdtypes.IN.A
 import dns.rdtypes.IN.AAAA
 
+import config.validator
 import utils.ipv6
 
 logger = logging.getLogger('DNS.Filter.Delegation')
 
 
+class DelegationConfig(config.validator.Validator):
+
+    structure = config.validator.StructuredDict({
+        'zone': config.validator.Name(),
+        'nameservers': config.validator.List(config.validator.Name()),
+        'ttl': config.validator.Basic(int),
+        'glue': config.validator.Dict(
+            config.validator.Name(),
+            config.validator.List(
+                config.validator.Address()
+            )
+        )
+    })
+
+
 class Delegation:
+
+    config = DelegationConfig
 
     def __init__(self, zone, nameservers, ttl=7200, glue={}):
         self.zone = zone
@@ -135,7 +153,24 @@ class Delegation:
         return "<Delegation('%s', %s>" % (self.zone, self.nameservers)
 
 
+class ReverseIPv6DelegationConfig(DelegationConfig):
+
+    structure = config.validator.StructuredDict({
+        'v6prefix': config.validator.Address(version=6),
+        'nameservers': config.validator.List(config.validator.Name()),
+        'ttl': config.validator.Basic(int),
+        'glue': config.validator.Dict(
+            config.validator.Name(),
+            config.validator.List(
+                config.validator.Address()
+            )
+        )
+    })
+
+
 class ReverseIPv6Delegation(Delegation):
+
+    config = ReverseIPv6DelegationConfig
 
     def __init__(self, v6prefix, *args, **kwargs):
         zone = utils.ipv6.prefixToReverseName(v6prefix)
