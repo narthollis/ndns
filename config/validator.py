@@ -65,7 +65,7 @@ class Basic(Parameter):
             raise ValueError('Must be a %s' % (self.t,))
 
     def type(self):
-        return t
+        return self.t
 
 
 class Name(Parameter):
@@ -88,7 +88,7 @@ class Address(Parameter):
 
     def __init__(self, version=None):
         if version != 4 and version != 6 and version is not None:
-            return ValueError('Version must be 4, 6 or None')
+            raise ValueError('Version must be 4, 6 or None')
 
         self.version = version
 
@@ -101,10 +101,15 @@ class Address(Parameter):
             else:
                 if not addr.version == self.version:
                     raise ValueError(
-                        'Not a valid IPv%d Address' % (slef.version, )
+                        'Not a valid IPv%d Address' % (self.version, )
                     )
+                else:
+                    return True
         except ValueError:
-            return ValueError('Not a valid Address')
+            raise ValueError('Not a valid Address')
+
+    def type(self):
+        return str
 
 
 class List(Parameter):
@@ -122,7 +127,11 @@ class List(Parameter):
 
         for i in range(0, len(value)):
             try:
-                self.contains.check(value[i])
+                if isinstance(self.contains, Parameter):
+                    self.contains.check(value[i])
+                else:
+                    if type(value[i]) is not self.contains:
+                        raise ValueError
             except ValueError as e:
                 raise ValueError('Item at index %s: %s' % (i, e))
 
@@ -138,20 +147,43 @@ class Dict(Parameter):
         self.keyType = key
         self.valueType = value
 
+        if isinstance(self.keyType, Parameter):
+            self.__checkKey = self.keyType.check
+        else:
+            self.__checkKey = lambda x: self.__checkPrimitive(
+                self.keyType,
+                x
+            )
+
+        if isinstance(self.valueType, Parameter):
+            self.__checkValue = self.valueType.check
+        else:
+            self.__checkValue = lambda x: self.__checkPrimitive(
+                self.valueType,
+                x
+            )
+
+    def __checkPrimitive(self, t, value):
+        return type(value) == t
+
     def check(self, value):
         if not type(value) == dict:
             raise ValueError('Not a valid Dict')
 
         for key, item in value.items():
             try:
-                self.keyType.check(key)
+                if not self.__checkKey(key):
+                    raise ValueError
             except ValueError as e:
                 raise ValueError('Key %s: %s' % (key, e))
 
             try:
-                self.valueType.check(item)
+                if not self.__checkValue(item):
+                    raise ValueError
             except ValueError as e:
                 raise ValueError('Item at Key %s: %s' % (key, e))
+
+        return True
 
     def type(self):
         return dict
